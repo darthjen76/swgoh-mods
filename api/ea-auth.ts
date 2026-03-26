@@ -8,6 +8,7 @@
  *   → { token: string, nucleusId: string }
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node'
+import { log } from './_logger'
 
 const CLIENT_ID    = 'SWGOH_SERVER_WEB_APP'
 const REDIRECT_URI = 'https://store.galaxy-of-heroes.starwars.ea.com'
@@ -91,6 +92,7 @@ async function startAuth(email: string): Promise<EaState> {
   if (!execution) throw new Error('Could not find execution in EA auth init')
 
   const initref = selfLoc.match(/initref=(.+)/)?.[1] ?? ''
+  log('ea-auth', `start: execution=${execution}`)
 
   // Submit email
   const loginUrl = `${SIGNIN_HOST}/p/juno/nff/login?execution=${execution}&initref=${initref}`
@@ -99,6 +101,7 @@ async function startAuth(email: string): Promise<EaState> {
 
   const loc      = emailRes.headers.get('location') ?? ''
   const nextExec = extractExecution(loc) ?? execution.replace(/s\d+$/, 's2')
+  log('ea-auth', `email submitted → ${emailRes.status} next=${nextExec}`)
 
   return { execution: nextExec, initref, cookies }
 }
@@ -119,11 +122,15 @@ async function verifyCode(
   cookies = merge(cookies, res)
   debug.push(`OTP POST → ${res.status}`)
 
+  log('ea-auth', `OTP submitted → ${res.status}`)
+
   // 2b. Navigate until we get the OAuth code redirect
   for (let i = 0; i < 25; i++) {
     const status = res.status
     const loc    = res.headers.get('location') ?? ''
-    debug.push(`[${i}] status=${status} location=${loc.slice(0, 120)}`)
+    const msg    = `[${i}] status=${status} loc=${loc.slice(0, 100)}`
+    debug.push(msg)
+    log('ea-auth', msg)
 
     if (status === 302 || status === 301) {
       // Check for final code redirect
@@ -169,7 +176,10 @@ async function verifyCode(
         ...[...html.matchAll(/name=["']_eventId["'][^>]*value=["']([^"']+)["']/g)].map(m => m[1]),
         ...[...html.matchAll(/value=["']([^"']+)["'][^>]*name=["']_eventId["']/g)].map(m => m[1]),
       ]
-      debug.push(`  page eventIds: [${eventIds.join(', ')}]`)
+      const pageTitle = html.match(/<title>([^<]*)<\/title>/)?.[1] ?? '?'
+      const msg2 = `  200 title="${pageTitle}" exec=${execution} eventIds=[${eventIds.join(',')}]`
+      debug.push(msg2)
+      log('ea-auth', msg2)
 
       // Skip optional pages (PIN setup, remember device, etc.)
       // Prefer: cancel > back > submit
@@ -244,7 +254,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     return res.status(400).json({ error: 'action must be start or verify' })
   } catch (err) {
-    console.error('EA auth error:', err)
+    log('ea-auth', 'ERROR', err instanceof Error ? err.message : err)
     return res.status(500).json({ error: err instanceof Error ? err.message : 'Auth failed' })
   }
 }
