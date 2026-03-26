@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    { "source": "/api/swgoh", "destination": "/api/swgoh" },
+    { "source": "/(.*)",      "destination": "/index.html" }
+  ],
+  "functions": {
+    "api/swgoh.ts": {
+      "memory": 128,
+      "maxDuration": 10
+    }
+  }
+}
