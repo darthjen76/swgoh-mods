@@ -9,15 +9,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (req.method === 'OPTIONS') return res.status(204).end()
 
-  const path = (req.query.path as string) || 'units'
   const apiKey = process.env.SWGOH_GG_API_KEY
+  if (!apiKey) return res.status(500).json({ error: 'SWGOH_GG_API_KEY not configured' })
 
-  if (!apiKey) {
-    return res.status(500).json({ error: 'SWGOH_GG_API_KEY not configured' })
-  }
+  const allyCode = req.query.allyCode as string | undefined
+  const path     = (req.query.path as string) || 'units'
+
+  // Player data: roster + mods en un seul appel (5min cache)
+  // Données statiques (units, etc.) : 24h cache
+  const url          = allyCode ? `${GG_API}/player/${allyCode}/?expand=mods` : `${GG_API}/${path}/`
+  const cacheControl = allyCode ? 's-maxage=300, stale-while-revalidate=60' : 's-maxage=86400, stale-while-revalidate=3600'
 
   try {
-    const upstream = await fetch(`${GG_API}/${path}/`, {
+    const upstream = await fetch(url, {
       headers: { 'x-gg-bot-access': apiKey },
     })
 
@@ -27,8 +31,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const data = await upstream.json()
-    // Cache 24h — les noms/images de persos changent rarement
-    res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate=3600')
+    res.setHeader('Cache-Control', cacheControl)
     return res.status(200).json(data)
   } catch (err) {
     console.error('gg proxy error:', err)
