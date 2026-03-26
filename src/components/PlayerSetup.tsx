@@ -73,8 +73,11 @@ export default function PlayerSetup() {
           </button>
 
           {query.isError && (
-            <div className="p-3 rounded-lg text-red-400 text-sm" style={{ background: '#1a1010', border: '1px solid #7f1d1d' }}>
-              Erreur : ally code invalide ou API indisponible.
+            <div className="p-3 rounded-lg text-red-400 text-sm space-y-1" style={{ background: '#1a1010', border: '1px solid #7f1d1d' }}>
+              <div className="font-semibold">Erreur de chargement</div>
+              <div className="text-red-300 text-xs font-mono break-all">
+                {(query.error as Error)?.message ?? 'Erreur inconnue'}
+              </div>
             </div>
           )}
         </form>

@@ -4,7 +4,10 @@ import type { PlayerData, BestModsRecommendation, Character, Mod, ModStat } from
 // Proxy path — in dev Vite proxies /api → localhost:3001, in prod → Vercel function
 const proxyFetch = async (path: string) => {
   const res = await fetch(`/api/swgoh?path=${encodeURIComponent(path)}`)
-  if (!res.ok) throw new Error(`API error ${res.status}`)
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(body.error ?? `HTTP ${res.status}`)
+  }
   return res.json()
 }
 

@@ -34,8 +34,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
 
     if (!response.ok) {
+      const body = await response.text()
       return res.status(response.status).json({
-        error: `swgoh.gg API error: ${response.statusText}`,
+        error: `swgoh.gg ${response.status} ${response.statusText}: ${body.slice(0, 200)}`,
       })
     }
 
