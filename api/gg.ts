@@ -9,8 +9,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (req.method === 'OPTIONS') return res.status(204).end()
 
-  const apiKey = process.env.SWGOH_GG_API_KEY
-  if (!apiKey) return res.status(500).json({ error: 'SWGOH_GG_API_KEY not configured' })
+  const apiKey = process.env.SWGOH_API_KEY
+  if (!apiKey) return res.status(500).json({ error: 'SWGOH_API_KEY not configured' })
 
   const allyCode = req.query.allyCode as string | undefined
   const path     = (req.query.path as string) || 'units'

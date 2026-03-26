@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
 const COMLINK = 'https://swgoh-comlink-latest-wuy6.onrender.com'
+// Note: SWGOH_API_KEY est la clé swgoh.gg (dc38b), utilisée par api/gg.ts
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*')
