@@ -17,7 +17,7 @@ interface AppState {
   setRecoVersion: (v: string) => void
 
   // ─── Navigation ──────────────────────────────────────────────────────────
-  activeTab: 'roster' | 'optimizer' | 'slicer' | 'layouts' | 'settings'
+  activeTab: 'roster' | 'optimizer' | 'slicer' | 'layouts' | 'settings' | 'lab'
   selectedCharacterId: string | null
   setActiveTab: (tab: AppState['activeTab']) => void
   setSelectedCharacter: (id: string | null) => void

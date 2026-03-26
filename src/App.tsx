@@ -4,6 +4,7 @@ import PlayerSetup from './components/PlayerSetup'
 import Roster from './components/Roster'
 import Layouts from './components/Layouts'
 import Settings from './components/Settings'
+import EaAuthLab from './components/EaAuthLab'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false } },
@@ -13,6 +14,7 @@ const NAV_ITEMS = [
   { id: 'roster',   label: 'Roster',   icon: '👥' },
   { id: 'layouts',  label: 'Layouts',  icon: '💾' },
   { id: 'settings', label: 'Réglages', icon: '⚙️' },
+  { id: 'lab',      label: 'Lab',      icon: '⚗️' },
 ] as const
 
 function AppContent() {
@@ -34,6 +36,7 @@ function AppContent() {
         {activeTab === 'roster'   && <Roster />}
         {activeTab === 'layouts'  && <Layouts />}
         {activeTab === 'settings' && <Settings />}
+        {activeTab === 'lab'      && <EaAuthLab />}
       </main>
 
       <nav
