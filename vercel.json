@@ -1,4 +1,6 @@
 {
+  "devCommand": "npm run dev",
+  "outputDirectory": "dist",
   "rewrites": [
     { "source": "/api/swgoh", "destination": "/api/swgoh" },
     { "source": "/(.*)",      "destination": "/index.html" }
