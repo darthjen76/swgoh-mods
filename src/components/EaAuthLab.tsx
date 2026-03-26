@@ -52,6 +52,7 @@ export default function EaAuthLab() {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Erreur inconnue')
+      if (data.debug) console.log('EA auth debug:', data.debug)
       setResult(data)
       setStep('done')
     } catch (err) {
