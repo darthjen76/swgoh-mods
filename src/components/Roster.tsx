@@ -1,9 +1,16 @@
 import { useState } from 'react'
 import { useAppStore } from '../store'
+import { useUnitMap } from '../hooks/useSwgoh'
 import CharacterMods from './CharacterMods'
 import type { Character } from '../types/swgoh'
 
-function CharacterCard({ char, onClick }: { char: Character; onClick: () => void }) {
+function CharacterCard({ char, unitMap, onClick }: {
+  char: Character
+  unitMap: Record<string, { name: string; image: string }>
+  onClick: () => void
+}) {
+  const displayName  = unitMap[char.base_id]?.name  ?? char.name
+  const displayImage = unitMap[char.base_id]?.image ?? char.image
   const speedTotal = char.mods.reduce((sum, mod) => {
     const spd = mod.secondary_stats.find((s) => s.stat_id === 5)
     return sum + (spd?.value ?? 0)
@@ -25,29 +32,23 @@ function CharacterCard({ char, onClick }: { char: Character; onClick: () => void
       <div className="flex items-center gap-3">
         {/* Avatar */}
         <div className="relative flex-shrink-0">
-          {char.image ? (
+          {displayImage ? (
             <img
-              src={`https://swgoh.gg${char.image}`}
-              alt={char.name}
+              src={displayImage}
+              alt={displayName}
               className="w-14 h-14 rounded-lg object-cover"
               style={{ border: '2px solid #1e3a5f' }}
-              onError={(e) => {
-                ;(e.target as HTMLImageElement).style.display = 'none'
-              }}
+              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
             />
           ) : (
-            <div
-              className="w-14 h-14 rounded-lg flex items-center justify-center text-2xl"
-              style={{ background: '#111827' }}
-            >
+            <div className="w-14 h-14 rounded-lg flex items-center justify-center text-2xl"
+              style={{ background: '#111827' }}>
               👤
             </div>
           )}
           {char.relic_tier > 0 && (
-            <div
-              className="absolute -bottom-1 -right-1 text-xs font-bold px-1 rounded"
-              style={{ background: '#f59e0b', color: '#000' }}
-            >
+            <div className="absolute -bottom-1 -right-1 text-xs font-bold px-1 rounded"
+              style={{ background: '#f59e0b', color: '#000' }}>
               R{char.relic_tier}
             </div>
           )}
@@ -55,7 +56,7 @@ function CharacterCard({ char, onClick }: { char: Character; onClick: () => void
 
         {/* Info */}
         <div className="flex-1 min-w-0">
-          <div className="font-semibold text-white text-sm truncate">{char.name}</div>
+          <div className="font-semibold text-white text-sm truncate">{displayName}</div>
           <div className="text-xs text-slate-500">
             G{char.gear_level} · {char.power.toLocaleString()} GP
           </div>
@@ -77,6 +78,7 @@ function CharacterCard({ char, onClick }: { char: Character; onClick: () => void
 
 export default function Roster() {
   const { playerData, selectedCharacterId, setSelectedCharacter } = useAppStore()
+  const unitMap = useUnitMap()
   const [search, setSearch] = useState('')
 
   if (!playerData) return null
@@ -86,9 +88,10 @@ export default function Roster() {
     if (char) return <CharacterMods character={char} onBack={() => setSelectedCharacter(null)} />
   }
 
-  const filtered = playerData.characters.filter((c) =>
-    c.name.toLowerCase().includes(search.toLowerCase())
-  )
+  const filtered = playerData.characters.filter((c) => {
+    const name = unitMap[c.base_id]?.name ?? c.name
+    return name.toLowerCase().includes(search.toLowerCase())
+  })
 
   return (
     <div className="p-4 max-w-2xl mx-auto">
@@ -122,6 +125,7 @@ export default function Roster() {
           <CharacterCard
             key={char.base_id}
             char={char}
+            unitMap={unitMap}
             onClick={() => setSelectedCharacter(char.base_id)}
           />
         ))}

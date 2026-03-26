@@ -131,8 +131,8 @@ function transformComlinkPlayer(raw: Record<string, unknown>): PlayerData {
 
       return {
         base_id:    baseId,
-        name:       baseId,  // sera remplacé par le mapping noms plus tard
-        image:      `https://swgoh.gg/game-assets/tex.charui_${baseId.toLowerCase()}.png`,
+        name:       baseId,  // remplacé par useUnitMap() dans les composants
+        image:      `https://game-assets.swgoh.gg/textures/tex.charui_${baseId.toLowerCase()}.png`,
         gear_level: (u.currentTier as number) ?? 1,
         relic_tier: relicTier,
         power:      (u.gp as number) ?? 0,
@@ -169,4 +169,25 @@ export function usePlayer(allyCode: string) {
 
 export function useAllMods(characters: Character[]): Mod[] {
   return characters.flatMap((c) => c.mods)
+}
+
+// ─── Unit map (swgoh.gg) ──────────────────────────────────────────────────────
+// Utilisé pour les noms et images des persos — évite des appels Comlink répétés
+export function useUnitMap(): Record<string, { name: string; image: string }> {
+  const { data } = useQuery({
+    queryKey: ['unit-map'],
+    queryFn: async () => {
+      const res = await fetch('/api/gg?path=units')
+      if (!res.ok) return {}
+      const json = await res.json()
+      const map: Record<string, { name: string; image: string }> = {}
+      for (const unit of (json.data ?? []) as { base_id: string; name: string; image: string }[]) {
+        map[unit.base_id] = { name: unit.name, image: unit.image }
+      }
+      return map
+    },
+    staleTime: 24 * 60 * 60 * 1000, // 24h
+    retry: 1,
+  })
+  return data ?? {}
 }
