@@ -1,12 +1,14 @@
 import { useQuery } from '@tanstack/react-query'
 import type { PlayerData, BestModsRecommendation, Character, Mod, ModStat } from '../types/swgoh'
 
-// Proxy path — in dev Vite proxies /api → localhost:3001, in prod → Vercel function
-const proxyFetch = async (path: string) => {
-  const res = await fetch(`/api/swgoh?path=${encodeURIComponent(path)}`)
+// Appel direct depuis le navigateur — évite le blocage Cloudflare sur les IPs Vercel
+const swgohFetch = async (path: string, apiKey: string) => {
+  const res = await fetch(`https://swgoh.gg/api/${path}`, {
+    headers: { Authorization: `Token ${apiKey}` },
+  })
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(body.error ?? `HTTP ${res.status}`)
+    const body = await res.text()
+    throw new Error(`swgoh.gg ${res.status} ${res.statusText}: ${body.slice(0, 150)}`)
   }
   return res.json()
 }
@@ -71,26 +73,25 @@ function transformPlayer(raw: Record<string, unknown>): PlayerData {
 }
 
 // ─── Hooks ───────────────────────────────────────────────────────────────────
-export function usePlayer(allyCode: string) {
+export function usePlayer(allyCode: string, apiKey: string) {
   return useQuery({
     queryKey: ['player', allyCode],
     queryFn: async (): Promise<PlayerData> => {
-      const raw = await proxyFetch(`players/${allyCode}/`)
+      const raw = await swgohFetch(`players/${allyCode}/`, apiKey)
       return transformPlayer(raw)
     },
-    enabled: allyCode.length >= 9,
+    enabled: allyCode.length >= 9 && apiKey.length > 0,
     staleTime: 5 * 60 * 1000,
     retry: 1,
   })
 }
 
 // Best mods per character from top Kyber GAC players on swgoh.gg
-export function useBestMods(baseId: string | null) {
+export function useBestMods(baseId: string | null, apiKey: string) {
   return useQuery({
     queryKey: ['best-mods', baseId],
     queryFn: async (): Promise<BestModsRecommendation> => {
-      const raw = await proxyFetch(`units/${baseId}/best-mods/`)
-      // Transform swgoh.gg best-mods response
+      const raw = await swgohFetch(`units/${baseId}/best-mods/`, apiKey)
       const sets = (raw.best_mods_sets as Array<{ set: number; count: number; percent: number }> ?? [])
         .map((s) => ({ set: s.set, usage_pct: s.percent }))
         .sort((a, b) => b.usage_pct - a.usage_pct)
@@ -110,7 +111,7 @@ export function useBestMods(baseId: string | null) {
         speed_priority: (raw.avg_speed as number) ?? 0,
       }
     },
-    enabled: !!baseId,
+    enabled: !!baseId && apiKey.length > 0,
     staleTime: 30 * 60 * 1000,
     retry: 1,
   })

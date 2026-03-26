@@ -1,4 +1,5 @@
 import { useBestMods } from '../hooks/useSwgoh'
+import { useAppStore } from '../store'
 import { MOD_SETS, MOD_SLOTS } from '../types/swgoh'
 import type { Character } from '../types/swgoh'
 
@@ -22,7 +23,8 @@ function MatchBadge({ match }: { match: boolean }) {
 }
 
 export default function ModOptimizer({ character }: Props) {
-  const { data: rec, isLoading, isError } = useBestMods(character.base_id)
+  const { apiKey } = useAppStore()
+  const { data: rec, isLoading, isError } = useBestMods(character.base_id, apiKey)
 
   if (isLoading) {
     return (

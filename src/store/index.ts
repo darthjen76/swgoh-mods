@@ -5,8 +5,10 @@ import type { PlayerData, ModLayout, SliceCondition, Mod } from '../types/swgoh'
 interface AppState {
   // ─── Player ──────────────────────────────────────────────────────────────
   allyCode: string
+  apiKey: string
   playerData: PlayerData | null
   setAllyCode: (code: string) => void
+  setApiKey: (key: string) => void
   setPlayerData: (data: PlayerData) => void
   clearPlayer: () => void
 
@@ -38,8 +40,10 @@ export const useAppStore = create<AppState>()(
     (set, get) => ({
       // Player
       allyCode: '',
+      apiKey: '',
       playerData: null,
       setAllyCode: (code) => set({ allyCode: code }),
+      setApiKey: (key) => set({ apiKey: key }),
       setPlayerData: (data) => set({ playerData: data }),
       clearPlayer: () => set({ playerData: null, allyCode: '', selectedCharacterId: null }),
 
@@ -95,6 +99,7 @@ export const useAppStore = create<AppState>()(
       name: 'swgoh-mods-storage',
       partialize: (state) => ({
         allyCode: state.allyCode,
+        apiKey: state.apiKey,
         layouts: state.layouts,
         sliceConditions: state.sliceConditions,
       }),
