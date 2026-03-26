@@ -12,8 +12,12 @@ interface AppState {
   setPlayerData: (data: PlayerData) => void
   clearPlayer: () => void
 
+  // ─── Recommendations version ─────────────────────────────────────────────
+  recoVersion: string | null
+  setRecoVersion: (v: string) => void
+
   // ─── Navigation ──────────────────────────────────────────────────────────
-  activeTab: 'roster' | 'optimizer' | 'slicer' | 'layouts'
+  activeTab: 'roster' | 'optimizer' | 'slicer' | 'layouts' | 'settings'
   selectedCharacterId: string | null
   setActiveTab: (tab: AppState['activeTab']) => void
   setSelectedCharacter: (id: string | null) => void
@@ -46,6 +50,10 @@ export const useAppStore = create<AppState>()(
       setApiKey: (key) => set({ apiKey: key }),
       setPlayerData: (data) => set({ playerData: data }),
       clearPlayer: () => set({ playerData: null, allyCode: '', selectedCharacterId: null }),
+
+      // Recommendations
+      recoVersion: null,
+      setRecoVersion: (v) => set({ recoVersion: v }),
 
       // Navigation
       activeTab: 'roster',
@@ -100,6 +108,7 @@ export const useAppStore = create<AppState>()(
       partialize: (state) => ({
         allyCode: state.allyCode,
         apiKey: state.apiKey,
+        recoVersion: state.recoVersion,
         layouts: state.layouts,
         sliceConditions: state.sliceConditions,
       }),
