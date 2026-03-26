@@ -4,9 +4,9 @@ import { STAT_NAMES } from '../types/swgoh'
 
 export const COMLINK_URL = 'https://swgoh-comlink-latest-wuy6.onrender.com'
 
-// ─── Comlink fetch ────────────────────────────────────────────────────────────
+// ─── Comlink fetch (via Vercel proxy pour éviter les problèmes CORS) ──────────
 async function comlinkPost(endpoint: string, payload: unknown) {
-  const res = await fetch(`${COMLINK_URL}${endpoint}`, {
+  const res = await fetch(`/api/swgoh?endpoint=${endpoint}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),

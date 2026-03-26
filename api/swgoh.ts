@@ -1,51 +1,34 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
-const SWGOH_API_BASE = 'https://swgoh.gg/api'
-const API_KEY = process.env.SWGOH_API_KEY
+const COMLINK = 'https://swgoh-comlink-latest-wuy6.onrender.com'
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS
   res.setHeader('Access-Control-Allow-Origin', '*')
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
 
-  if (req.method === 'OPTIONS') {
-    return res.status(204).end()
-  }
+  if (req.method === 'OPTIONS') return res.status(204).end()
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
-  if (!API_KEY) {
-    return res.status(500).json({ error: 'SWGOH_API_KEY not configured' })
-  }
-
-  // Extract path after /api/swgoh  e.g. /api/swgoh/players/123456789/
-  const path = (req.query.path as string) || ''
-  if (!path) {
-    return res.status(400).json({ error: 'Missing path parameter' })
-  }
-
-  const url = `${SWGOH_API_BASE}/${path}`
+  const endpoint = (req.query.endpoint as string) || '/player'
 
   try {
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Token ${API_KEY}`,
-        'Content-Type': 'application/json',
-      },
+    const upstream = await fetch(`${COMLINK}${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body),
     })
 
-    if (!response.ok) {
-      const body = await response.text()
-      return res.status(response.status).json({
-        error: `swgoh.gg ${response.status} ${response.statusText}: ${body.slice(0, 200)}`,
-      })
+    if (!upstream.ok) {
+      const text = await upstream.text()
+      return res.status(upstream.status).json({ error: `Comlink ${upstream.status}: ${text.slice(0, 200)}` })
     }
 
-    const data = await response.json()
-    // Cache for 5 minutes
+    const data = await upstream.json()
     res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=60')
     return res.status(200).json(data)
   } catch (err) {
     console.error('Proxy error:', err)
-    return res.status(500).json({ error: 'Failed to fetch from swgoh.gg' })
+    return res.status(500).json({ error: 'Failed to reach Comlink' })
   }
 }
