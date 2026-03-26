@@ -1,11 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
 import type { PlayerData, BestModsRecommendation, Character, Mod, ModStat } from '../types/swgoh'
 
-// Appel direct depuis le navigateur — évite le blocage Cloudflare sur les IPs Vercel
+const WORKER_URL = 'https://round-boat-e94d.bulard-julien.workers.dev'
+
 const swgohFetch = async (path: string, apiKey: string) => {
-  const res = await fetch(`https://swgoh.gg/api/${path}`, {
-    headers: { Authorization: `Token ${apiKey}` },
-  })
+  const res = await fetch(`${WORKER_URL}?path=${encodeURIComponent(path)}&token=${encodeURIComponent(apiKey)}`)
   if (!res.ok) {
     const body = await res.text()
     throw new Error(`swgoh.gg ${res.status} ${res.statusText}: ${body.slice(0, 150)}`)
