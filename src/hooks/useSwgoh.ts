@@ -1,117 +1,168 @@
 import { useQuery } from '@tanstack/react-query'
-import type { PlayerData, BestModsRecommendation, Character, Mod, ModStat } from '../types/swgoh'
+import type { PlayerData, Character, Mod, ModStat } from '../types/swgoh'
+import { STAT_NAMES } from '../types/swgoh'
 
-const WORKER_URL = 'https://round-boat-e94d.bulard-julien.workers.dev'
+export const COMLINK_URL = 'https://swgoh-comlink-latest-wuy6.onrender.com'
 
-const swgohFetch = async (path: string, apiKey: string) => {
-  const res = await fetch(`${WORKER_URL}?path=${encodeURIComponent(path)}&token=${encodeURIComponent(apiKey)}`)
+// ─── Comlink fetch ────────────────────────────────────────────────────────────
+async function comlinkPost(endpoint: string, payload: unknown) {
+  const res = await fetch(`${COMLINK_URL}${endpoint}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
   if (!res.ok) {
-    const body = await res.text()
-    throw new Error(`swgoh.gg ${res.status} ${res.statusText}: ${body.slice(0, 150)}`)
+    const text = await res.text()
+    throw new Error(`Comlink ${res.status}: ${text.slice(0, 200)}`)
   }
   return res.json()
 }
 
-// ─── Transform raw swgoh.gg player response ──────────────────────────────────
-function transformStat(raw: { stat_id: number; name: string; value: number | string; display_value?: string; roll?: number }): ModStat {
+// ─── Mod definitionId parser ─────────────────────────────────────────────────
+// Format réel Comlink: nombre 3 chiffres "{set}{rarity}{slot}"
+// Ex: "751" → set=7 (Potency), rarity=5 (5 dots), slot=1 (Square)
+function parseModDefinitionId(defId: string): { set: number; slot: number; rarity: number } {
+  const n = parseInt(defId, 10)
+  if (isNaN(n) || n < 100) return { set: 1, slot: 1, rarity: 5 }
   return {
-    stat_id: raw.stat_id,
-    name: raw.name,
-    value: Number(raw.value),
-    display_value: raw.display_value ?? String(raw.value),
-    roll: raw.roll,
+    set:    Math.floor(n / 100),
+    rarity: Math.floor((n % 100) / 10),
+    slot:   n % 10,
   }
 }
 
-function transformMod(raw: Record<string, unknown>, charId: string): Mod {
+// ─── Stat value extraction ────────────────────────────────────────────────────
+// statValueDecimal est une string représentant la valeur interne du jeu
+// Les stats % sont divisées par 100000 (ex: 110000 → 1.10%)
+// Les stats flat larges (speed, health) par 10000 (ex: 180000 → 18)
+// Les stats flat petites (defense, offense flat) sont utilisées telles quelles
+const PCT_STAT_IDS = new Set([14, 16, 17, 18, 19, 41, 42, 53, 54, 55, 56])
+const LARGE_FLAT_THRESHOLD = 10000
+
+function parseStatValue(statId: number, statValueDecimal: string): number {
+  const raw = parseInt(statValueDecimal, 10)
+  if (isNaN(raw)) return 0
+  if (PCT_STAT_IDS.has(statId)) return raw / 100000  // → ex: 1.10 pour 1.10%
+  if (raw > LARGE_FLAT_THRESHOLD)   return raw / 10000   // → ex: 18 speed, 299 health
+  return raw                                              // → ex: 143 defense flat
+}
+
+function formatStatDisplay(statId: number, value: number): string {
+  if (PCT_STAT_IDS.has(statId)) return `${value.toFixed(2)}%`
+  return String(Math.round(value))
+}
+
+function makeModStat(
+  unitStatId: number,
+  statValueDecimal: string,
+  roll?: number,
+): ModStat {
+  const value = parseStatValue(unitStatId, statValueDecimal)
   return {
-    id: raw.id as string,
-    slot: raw.slot as number,
-    set: raw.set as number,
-    level: raw.level as number,
-    tier: raw.tier as number,
-    rarity: (raw.rarity as number) ?? (raw.dot as number) ?? 1,
-    character: charId,
-    primary_stat: transformStat(raw.primary_stat as Parameters<typeof transformStat>[0]),
-    secondary_stats: ((raw.secondary_stats as unknown[]) ?? []).map((s) =>
-      transformStat(s as Parameters<typeof transformStat>[0])
-    ),
+    stat_id:       unitStatId,
+    name:          STAT_NAMES[unitStatId] ?? `Stat ${unitStatId}`,
+    value,
+    display_value: formatStatDisplay(unitStatId, value),
+    roll,
   }
 }
 
-function transformPlayer(raw: Record<string, unknown>): PlayerData {
-  const units = (raw.units as Record<string, unknown>[]) ?? []
-  const characters: Character[] = units
+// ─── Transform Comlink mod ────────────────────────────────────────────────────
+function transformComlinkMod(raw: Record<string, unknown>, charId: string): Mod | null {
+  try {
+    const defId = raw.definitionId as string
+    const { set, slot, rarity } = parseModDefinitionId(defId)
+    if (!set || !slot) return null
+
+    const ps  = raw.primaryStat as {
+      stat: { unitStatId: number; statValueDecimal: string }
+    }
+    const primary = makeModStat(ps.stat.unitStatId, ps.stat.statValueDecimal)
+
+    const secondaries = ((raw.secondaryStat as unknown[]) ?? []).map((s) => {
+      const sec = s as {
+        stat:       { unitStatId: number; statValueDecimal: string }
+        statRolls:  number
+      }
+      return makeModStat(sec.stat.unitStatId, sec.stat.statValueDecimal, sec.statRolls)
+    })
+
+    return {
+      id:              raw.id as string,
+      slot,
+      set,
+      level:           raw.level as number,
+      tier:            raw.tier as number,
+      rarity,
+      character:       charId,
+      primary_stat:    primary,
+      secondary_stats: secondaries,
+    }
+  } catch {
+    return null
+  }
+}
+
+// ─── Transform Comlink player ─────────────────────────────────────────────────
+// Les vaisseaux n'ont pas de mods et ont currentTier=1 sans équipement de relic
+// On filtre par: présence de mods OU currentTier > 1 (donc gear > 1)
+function transformComlinkPlayer(raw: Record<string, unknown>): PlayerData {
+  const roster = (raw.rosterUnit as Record<string, unknown>[]) ?? []
+
+  const characters: Character[] = roster
     .filter((u) => {
-      const d = u.data as Record<string, unknown>
-      return d && !d.is_ship
+      // Exclure les vaisseaux : ils n'ont jamais de mods et leur relic.currentTier = 1
+      // Les personnages sont soit moddés, soit en train d'être montés (gear > 1)
+      const relic = (u.relic as Record<string, number>)?.currentTier ?? 1
+      const mods  = (u.equippedStatMod as unknown[]) ?? []
+      const tier  = (u.currentTier as number) ?? 1
+      return relic > 1 || mods.length > 0 || tier > 1
     })
     .map((u) => {
-      const d = u.data as Record<string, unknown>
-      const baseId = d.base_id as string
+      const fullDefId = (u.definitionId as string) ?? ''
+      const baseId    = fullDefId.split(':')[0] ?? fullDefId
+
+      const relicRaw  = (u.relic as Record<string, number>)?.currentTier ?? 1
+      const relicTier = Math.max(0, relicRaw - 2)
+
+      const mods = ((u.equippedStatMod as unknown[]) ?? [])
+        .map((m) => transformComlinkMod(m as Record<string, unknown>, baseId))
+        .filter((m): m is Mod => m !== null)
+
       return {
-        base_id: baseId,
-        name: d.name as string,
-        image: d.image as string,
-        gear_level: d.gear_level as number,
-        relic_tier: ((d.relic_currentTier as number) ?? 0) - 2,
-        power: d.power as number,
-        mods: ((d.mods as unknown[]) ?? []).map((m) =>
-          transformMod(m as Record<string, unknown>, baseId)
-        ),
+        base_id:    baseId,
+        name:       baseId,  // sera remplacé par le mapping noms plus tard
+        image:      `https://swgoh.gg/game-assets/tex.charui_${baseId.toLowerCase()}.png`,
+        gear_level: (u.currentTier as number) ?? 1,
+        relic_tier: relicTier,
+        power:      (u.gp as number) ?? 0,
+        mods,
       }
     })
     .sort((a, b) => b.power - a.power)
 
   return {
-    ally_code: raw.ally_code as number,
-    name: (raw.data as Record<string, unknown>)?.name as string ?? 'Player',
+    ally_code:    raw.allyCode as number,
+    name:         (raw.name as string) ?? 'Player',
     characters,
     last_updated: new Date().toISOString(),
   }
 }
 
-// ─── Hooks ───────────────────────────────────────────────────────────────────
-export function usePlayer(allyCode: string, apiKey: string) {
+// ─── Hooks ────────────────────────────────────────────────────────────────────
+export function usePlayer(allyCode: string) {
+  const code = allyCode.replace(/\D/g, '')
   return useQuery({
-    queryKey: ['player', allyCode],
+    queryKey: ['player', code],
     queryFn: async (): Promise<PlayerData> => {
-      const raw = await swgohFetch(`players/${allyCode}/`, apiKey)
-      return transformPlayer(raw)
+      const raw = await comlinkPost('/player', {
+        payload: { allyCode: code },
+        enums:   false,
+      })
+      return transformComlinkPlayer(raw)
     },
-    enabled: allyCode.length >= 9 && apiKey.length > 0,
+    enabled: code.length >= 9,
     staleTime: 5 * 60 * 1000,
-    retry: 1,
-  })
-}
-
-// Best mods per character from top Kyber GAC players on swgoh.gg
-export function useBestMods(baseId: string | null, apiKey: string) {
-  return useQuery({
-    queryKey: ['best-mods', baseId],
-    queryFn: async (): Promise<BestModsRecommendation> => {
-      const raw = await swgohFetch(`units/${baseId}/best-mods/`, apiKey)
-      const sets = (raw.best_mods_sets as Array<{ set: number; count: number; percent: number }> ?? [])
-        .map((s) => ({ set: s.set, usage_pct: s.percent }))
-        .sort((a, b) => b.usage_pct - a.usage_pct)
-
-      const primaries: BestModsRecommendation['primaries'] = {}
-      const primaryData = raw.best_mods_primaries as Record<string, Array<{ stat_id: number; name: string; count: number; percent: number }>> ?? {}
-      for (const [slot, stats] of Object.entries(primaryData)) {
-        primaries[Number(slot)] = stats
-          .map((s) => ({ stat_id: s.stat_id, name: s.name, usage_pct: s.percent }))
-          .sort((a, b) => b.usage_pct - a.usage_pct)
-      }
-
-      return {
-        base_id: baseId!,
-        sets,
-        primaries,
-        speed_priority: (raw.avg_speed as number) ?? 0,
-      }
-    },
-    enabled: !!baseId && apiKey.length > 0,
-    staleTime: 30 * 60 * 1000,
     retry: 1,
   })
 }
