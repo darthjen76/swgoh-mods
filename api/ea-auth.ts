@@ -8,7 +8,13 @@
  *   → { token: string, nucleusId: string }
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { log } from './_logger'
+
+function log(tag: string, ...args: unknown[]) {
+  const line = `[${new Date().toISOString()}] [${tag}] ${args.map(a =>
+    typeof a === 'string' ? a : JSON.stringify(a, null, 0)
+  ).join(' ')}`
+  console.log(line)
+}
 
 const CLIENT_ID    = 'SWGOH_SERVER_WEB_APP'
 const REDIRECT_URI = 'https://store.galaxy-of-heroes.starwars.ea.com'
@@ -116,7 +122,15 @@ async function verifyCode(
 
   const signinUrl = () => `${SIGNIN_HOST}/p/juno/nff/login?execution=${execution}&initref=${initref}`
 
-  // 2a. POST OTP
+  // 2a. GET the OTP page first to refresh session cookies before submitting
+  const pageRes = await get(signinUrl(), cookies)
+  cookies = merge(cookies, pageRes)
+  const sl0 = pageRes.headers.get('selflocation') ?? ''
+  if (sl0) { const e = extractExecution(sl0); if (e) execution = e }
+  debug.push(`OTP page GET → ${pageRes.status}`)
+  log('ea-auth', `OTP page GET → ${pageRes.status}`)
+
+  // 2b. POST OTP
   let res = await post(signinUrl(), cookies,
     `oneTimeCode=${encodeURIComponent(otpCode)}&_eventId=submit&execution=${execution}&initref=${initref}`)
   cookies = merge(cookies, res)
@@ -133,9 +147,10 @@ async function verifyCode(
     log('ea-auth', msg)
 
     if (status === 302 || status === 301) {
-      // Check for final code redirect
-      if (loc.includes('code=') || (loc.includes(REDIRECT_URI) && loc.includes('?'))) {
-        const fullLoc  = loc.startsWith('http') ? loc : `${SIGNIN_HOST}${loc}`
+      const fullLoc = loc.startsWith('http') ? loc : `${SIGNIN_HOST}${loc}`
+
+      // OAuth success — code in URL
+      if (loc.includes('code=')) {
         const oauthCode = new URL(fullLoc).searchParams.get('code')
         if (oauthCode) {
           debug.push('OAuth code obtained, exchanging for token…')
@@ -144,12 +159,17 @@ async function verifyCode(
         }
       }
 
+      // ACCESS_DENIED at REDIRECT_URI — stop immediately
+      if (loc.includes(REDIRECT_URI) && loc.includes('error=')) {
+        const errCode = new URL(fullLoc).searchParams.get('error_code') ?? 'unknown'
+        throw new Error(`EA OAuth access denied (code ${errCode}). The EA account may not have access to SWGOH_SERVER_WEB_APP. Debug: ${debug.join(' | ')}`)
+      }
+
       // Follow redirect and update execution from new URL
-      const nextUrl  = loc.startsWith('http') ? loc : `${SIGNIN_HOST}${loc}`
-      const execInUrl = extractExecution(nextUrl)
+      const execInUrl = extractExecution(fullLoc)
       if (execInUrl) execution = execInUrl
 
-      res     = await get(nextUrl, cookies)
+      res     = await get(fullLoc, cookies)
       cookies = merge(cookies, res)
 
       // Also try to get execution from selflocation
@@ -166,26 +186,60 @@ async function verifyCode(
       const execSelf = extractExecution(selfLoc)
       if (execSelf) execution = execSelf
 
-      // Check for error page (no way forward)
-      if (html.includes('Something went wrong')) {
-        throw new Error(`EA returned an error page at step ${i}. Debug: ${debug.join(' | ')}`)
-      }
-
       // Detect all _eventId values in the page (handle both attribute orders)
       const eventIds = [
         ...[...html.matchAll(/name=["']_eventId["'][^>]*value=["']([^"']+)["']/g)].map(m => m[1]),
         ...[...html.matchAll(/value=["']([^"']+)["'][^>]*name=["']_eventId["']/g)].map(m => m[1]),
       ]
       const pageTitle = html.match(/<title>([^<]*)<\/title>/)?.[1] ?? '?'
-      const msg2 = `  200 title="${pageTitle}" exec=${execution} eventIds=[${eventIds.join(',')}]`
+      // Log 800 chars of HTML body for debugging
+      const bodySnip  = (html.match(/<body[^>]*>([\s\S]*)/i)?.[1] ?? html).replace(/\s+/g, ' ').slice(0, 800)
+      const msg2 = `  200 title="${pageTitle}" exec=${execution} eventIds=[${eventIds.join(',')}] body="${bodySnip}"`
       debug.push(msg2)
       log('ea-auth', msg2)
 
-      // Skip optional pages (PIN setup, remember device, etc.)
-      // Prefer: cancel > back > submit
+      // Detect <meta http-equiv="refresh"> — follow it via GET instead of POST
+      const metaRefresh = html.match(/http-equiv=["']refresh["'][^>]*content=["'][^"']*url=['"]?([^"'\s>]+)/i)?.[1]
+                       ?? html.match(/content=["'][^"']*url=['"]?([^"'\s>]+)[^>]*http-equiv=["']refresh["']/i)?.[1]
+      if (metaRefresh && eventIds.length === 0) {
+        const refreshUrl = metaRefresh.startsWith('http') ? metaRefresh : `${SIGNIN_HOST}${metaRefresh}`
+        debug.push(`  meta-refresh → GET ${refreshUrl.slice(0, 120)}`)
+        log('ea-auth', `meta-refresh → GET ${refreshUrl.slice(0, 120)}`)
+        res     = await get(refreshUrl, cookies)
+        cookies = merge(cookies, res)
+        continue
+      }
+
+      // Detect JavaScript redirect (location.replace/href) when no eventIds and no meta-refresh
+      if (eventIds.length === 0) {
+        const jsRedirect = html.match(/location\.replace\(["']([^"']+)["']\)/)?.[1]
+                        ?? html.match(/location\.href\s*=\s*["']([^"']+)["']/)?.[1]
+        if (jsRedirect) {
+          const jsUrl = jsRedirect.startsWith('http') ? jsRedirect : `${SIGNIN_HOST}${jsRedirect}`
+          debug.push(`  js-redirect → GET ${jsUrl.slice(0, 120)}`)
+          log('ea-auth', `js-redirect → GET ${jsUrl.slice(0, 120)}`)
+          res     = await get(jsUrl, cookies)
+          cookies = merge(cookies, res)
+          continue
+        }
+      }
+
+      // If we're back on the email entry page (s1), session was invalidated — stop
+      if (execution.endsWith('s1') && (pageTitle.toUpperCase().includes('SIGN IN') || html.includes('type="email"'))) {
+        throw new Error(`EA session invalidated — restarted at email step after step ${i}. OTP may have expired or been invalid. Debug: ${debug.join(' | ')}`)
+      }
+
+      // Check for error page with no way forward
+      if (html.includes('Something went wrong') && eventIds.length === 0) {
+        throw new Error(`EA returned an error page at step ${i}. Debug: ${debug.join(' | ')}`)
+      }
+
+      // Skip optional pages — prefer cancel to skip, then any non-back event, back as last resort
+      const forwardEvent = eventIds.filter(e => e !== 'cancel' && e !== 'back')[0]
       const eventId = eventIds.includes('cancel') ? 'cancel'
-                    : eventIds.includes('back')   ? 'back'
-                    : 'submit'
+                    : forwardEvent                 ? forwardEvent
+                    : eventIds.includes('submit')  ? 'submit'
+                    : eventIds[0]                  ?? 'submit'
 
       debug.push(`  → POST _eventId=${eventId}`)
       res     = await post(signinUrl(), cookies, `_eventId=${eventId}&execution=${execution}&initref=${initref}`)
@@ -204,23 +258,59 @@ async function exchangeCode(
   oauthCode: string,
   cookies: Record<string, string>,
 ): Promise<{ token: string; nucleusId: string }> {
-  const tokenUrl = `${ACCOUNTS_URL}/connect/auth?response_type=token&client_id=ORIGIN_JS_SDK` +
+  log('ea-auth', `exchangeCode: oauthCode=${oauthCode.slice(0, 20)}…`)
+
+  // Approach A: authorization_code grant (public client, no secret)
+  const tokenRes = await fetch(`${ACCOUNTS_URL}/connect/token`, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'User-Agent':   UA,
+      Cookie:         serialize(cookies),
+    },
+    body: `grant_type=authorization_code&code=${encodeURIComponent(oauthCode)}` +
+          `&client_id=SWGOH_SERVER_WEB_APP&redirect_uri=${encodeURIComponent(REDIRECT_URI)}`,
+  })
+  log('ea-auth', `connect/token → ${tokenRes.status}`)
+
+  if (tokenRes.ok) {
+    const json = await tokenRes.json() as Record<string, unknown>
+    log('ea-auth', `connect/token json keys: ${Object.keys(json).join(', ')}`)
+    const token = json['access_token'] as string | undefined
+    if (token) {
+      return { token, nucleusId: (json['pid_id'] as string) ?? '' }
+    }
+  }
+
+  const tokenBody = await tokenRes.text().catch(() => '')
+  log('ea-auth', `connect/token body: ${tokenBody.slice(0, 200)}`)
+
+  // Approach B: ORIGIN_JS_SDK implicit grant — returns JSON body (not a redirect)
+  const implicitUrl = `${ACCOUNTS_URL}/connect/auth?response_type=token&client_id=ORIGIN_JS_SDK` +
     `&redirect_uri=nucleus%3Arest&prompt=none&release_type=prod`
 
-  const res = await get(tokenUrl, cookies)
-  const loc = res.headers.get('location') ?? ''
+  const res    = await fetch(implicitUrl, { redirect: 'manual', headers: headers(cookies) })
+  const status = res.status
+  const loc    = res.headers.get('location') ?? ''
+  const body   = await res.text().catch(() => '')
+  log('ea-auth', `ORIGIN_JS_SDK → status=${status} loc=${loc.slice(0, 100)} body=${body.slice(0, 200)}`)
 
-  const tokenMatch   = loc.match(/access_token=([^&]+)/)
-  const nucleusMatch = loc.match(/pid_id=([^&]+)/)
+  // Token may be in Location header (redirect) or body (JSON)
+  const fromLoc  = loc.match(/access_token=([^&#]+)/)?.[1]
+  const fromBody = (() => { try { return (JSON.parse(body) as Record<string,string>)['access_token'] } catch { return null } })()
+  const token    = fromLoc ? decodeURIComponent(fromLoc) : fromBody
 
-  if (!tokenMatch) {
-    throw new Error(`Token exchange failed. Location: ${loc.slice(0, 300)}`)
+  if (token) {
+    const nucleusFromLoc  = loc.match(/pid_id=([^&#]+)/)?.[1]
+    const nucleusFromBody = (() => { try { return (JSON.parse(body) as Record<string,string>)['pid_id'] } catch { return null } })()
+    return {
+      token,
+      nucleusId: nucleusFromLoc ? decodeURIComponent(nucleusFromLoc) : (nucleusFromBody ?? ''),
+    }
   }
 
-  return {
-    token:     decodeURIComponent(tokenMatch[1]),
-    nucleusId: nucleusMatch ? decodeURIComponent(nucleusMatch[1]) : '',
-  }
+  throw new Error(`Token exchange failed. connect/token=${tokenRes.status} | ORIGIN_JS_SDK status=${status} loc="${loc.slice(0,100)}" body="${body.slice(0,200)}"`)
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
